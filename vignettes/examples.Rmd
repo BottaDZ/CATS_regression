@@ -1,0 +1,145 @@
+---
+title: "Examples of CATS analysis"
+output: 
+   bookdown::pdf_document2: default
+bibliography: raevel.bib
+csl: ecology-letters.csl
+vignette: >
+  %\VignetteIndexEntry{Examples}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# Intial settings
+
+First we load the package and data will be used. Data on vegetation of rocky outcrops from Raevel [-@raevel_mechanisms_2012]. 
+
+```{r setup}
+library(CATSregression)
+data("Raevel")
+```
+
+Let's look at the structure of data.
+
+```{r str_data}
+str(Raevel)
+```
+It contains community matrix, data frames of traits and environmental variables, and matrix of coordinates. In this example only the three continuous traits will be used. It is appropriate to log-transform them. 
+
+```{r data_select}
+comm<-Raevel$comm
+traits<-log(Raevel$traits[,1:3])
+```
+
+# Testing local trait selection
+
+In our first model, we assume that abundance is a linear function of the three traits. 
+Here we do not consider 
+The abundance is measured by number of individuals, so we could assume that 
+they follow Poisson distribution. 
+
+```{r model1}
+m1<-CATSregression(comm,traits,est.prior=F)
+```
+
+Let's check if our assumption of Poisson 
+distribution was satisfied. For this purpose, we draw diagnostic plots.
+
+```{r diagplot, echo =FALSE, fig.height=3.5}
+par(mai=c(0.82, 0.82, 0.2, 0.42))
+plot(m1,log="x")
+```
+
+
+The fan shape on residuals versus fitted values and strong nonlinearity of the QQ 
+plot indicate that the distributional assumption of a Poisson regression is not satisfied. 
+Probably because counts are over-dispersed. This problem can be solved using 
+negative binomial distribution instead of Poisson. 
+
+```{r model2}
+m2<-CATSregression(comm,traits,family="nb",est.prior=F)
+plot(m2,log="x")
+```
+The diagnostic plots looks better!
+Let's see how our model fit to the data!
+
+```{r Rsquared}
+par(mfrow=c(1,2))
+boxplot(m2$R.sq,main="R-Squared")
+boxplot(m2$R.sq.adj,main="Adjusted R-squared")
+abline(h=0,col="red")
+par(mfrow=c(1,1))
+```
+The model is poorly fit: R-squared values are low, and adjusted R-squared is often negative. The two possible reasons are mis-specified model and weak local selection on these traits. Function `checkCATS` helps to check misspecification. It uses parametric bootstrap to estimate the distribution of R-squared when the model is accurately specified.
+
+```{r check.model2}
+CATSregression:::checkCATS(m2)
+```
+Red dots in the figure are R^2^ in the field sample, while boxplots indicates its distribution in the bootstrap samples. Field values (red points) should be near to the median. 
+Neither red points are below the box, so our model is enough complex. However, there may be non-significant predictors in the model. Let's test the predictors by permutation test!
+
+Note that running the code below may take several minutes.
+```{r anova}
+anova2<-anova(m2)
+```
+
+Since CATSregression fits separate model for each plot, $anova$ makes separate permutation tests for each model, and results in list of Anova-like tables. Therefore, it is advisable to put results into a new variable, instead of printing results on the screen. If we want to print results for specific plot (e.g. plot 1), it can be done by the following way:
+
+```{r anova2}
+anova2[[1]]
+```
+
+There is a helper function for extracting p-values from the $anova$ results and organizing them into a matrix form:
+
+```{r extract.p}
+p.values<-extract.pvalues(anova2)
+head(p.values)
+```
+
+For getting an overview, it may be appropriate to print only symbols of significance levels (asterisks, dot and NS) instead of the p-values itselves.
+
+```{r p2asterisk}
+head(symnum(p.values, corr = FALSE, na = FALSE, 
+       cutpoints = c(0,0.001, 0.01, 0.05, 0.1, 1), 
+       symbols = c("***", "**", "*", ".", "NS")))
+```
+
+Function $coef$ extracts the models' coefficients, which can be plotted against environmental variables to show the changes of selection along these environmental gradients. Let's see for example how the selection on SLA changes along height of 
+
+
+```{r coef}
+plot(coef(m2)[,"SLA"]~Raevel$envir$Height,xlab="Height",ylab="coef. of SLA",
+     pch=c(1,19)[as.numeric(p.values[,"SLA"]<=0.05)+1])
+```
+Below 10 m height, there is a large variation of coefficients; both strong positive and negative selection occurs. On the other hand, in taller outcrops (above 10 m), the coefficients is always negative, that is, species with higher SLA has lower abundance. 
+
+
+# Variation partitioning
+For variation partitioning three models have to be fitted: one containing only traits, one containing only meta-community effect, and one containing both. The first model has already been fitted. Let's fit the other two, calculate variation components and plot them against the wall height.
+
+
+```{r model3}
+#effect of traits and meta-community
+m3<-CATSregression(comm,traits,family="nb",est.prior=T)
+# effect of metacommunity only
+m4<-CATSregression(comm,traits,family="nb",est.prior=T,formul="1")
+pure.trait<-m3$R.sq.adj-m4$R.sq.adj
+pure.metacom<-m3$R.sq.adj-m2$R.sq.adj
+pure.trait[pure.trait<0]<-0
+pure.metacom[pure.metacom<0]<-0
+par(mfrow=c(1,2))
+plot(pure.trait~Raevel$envir$Height,xlab="Height",ylab="pure trait effect")
+plot(pure.metacom~Raevel$envir$Height,xlab="Height",ylab="pure metacommunity effect")
+
+```
+While small trait and relatively large meta-community effect can occur independently from height of the outcrop, in large outcrops (heigth is 15 m or above) the trait selection is always weak and meta-community effect is strong.
+
+# Reference
+
